@@ -1,0 +1,499 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+	<title>Catch-Up demo-v02</title>
+	<style>
+		body {
+			margin: 0;
+			padding: 0;
+			background-color: #ffffff;
+		}
+	</style>
+	
+	<script src="lib/pixi.min.js"></script>	
+	<script type="text/javascript" src="lib/surfacecurve-color.js"></script>
+</head>
+<body>
+	<script>
+
+//Console.log(PIXI.Version);
+
+var color = surfacecurve.color;
+
+var MODE = {
+	DISABLED: 0,
+	READY: 1,
+	HOVER: 2,
+	HIDDEN: 3,
+	PREVIEW: 4,
+};
+
+
+var SEGMENTSIZE = 20;	
+
+
+//Create the renderer
+var renderer = PIXI.autoDetectRenderer(980, 480, {antialias: true});
+
+//Add the canvas to the HTML document
+document.body.appendChild(renderer.view);
+
+//Create a container object called the `stage`
+var stage = new PIXI.Container();
+stage.interactive = true;
+
+var game;
+var npieces = 7;
+
+
+var Button = function (x, y, w, h, text, callback)  {
+	this.group = new PIXI.Container();
+	this.group.x = x;
+	this.group.y = y;
+	this.callback = callback;
+
+	this.shape = new PIXI.Graphics();
+	// draw a rounded rectangle
+	this.shape.lineStyle(2, 0xFF00FF, 1);
+	this.shape.beginFill(0xFF00BB, 0.25);
+	this.shape.drawRoundedRect(-w/2, -h/2, w, h, 5);
+	this.shape.endFill();
+	this.group.addChild(this.shape);
+	
+	this.textstyle = {font : '16px Arial', fill : 0xffffff, align : 'center'};
+	this.label = new PIXI.Text(text, this.textstyle);
+	this.label.anchor.set(0.5);
+
+	this.group.addChild(this.label);
+	stage.addChild(this.group);
+
+	this.group.interactive = true;
+	var self = this;
+
+	this.group.mousedown = function (event) {
+		self.onMouseDown(event);
+	}
+}
+
+Button.prototype.onMouseDown = function (event) {
+	this.callback();
+}
+
+var Game = function (n) {
+	this.n = n
+	this.scores = [0,0,0];
+	this.pieces = [];
+	this.preview_pieces = [];
+	this.player = 1;
+
+	this.CreateBoard(this.n);
+
+	this.holder = new Holder();
+	stage.addChild(this.holder.graphics);
+
+	this.textstyle = {font : '30px Arial', fill : 0xffffff, align : 'center'};
+	this.scoretext = new PIXI.Text("Score: 0-0", this.textstyle);
+	this.scoretext.x = this.holder.graphics.x - this.holder.graphics.width/2;
+	this.scoretext.y = this.holder.graphics.y + this.holder.graphics.height/2 + 10;
+	stage.addChild(this.scoretext);	
+
+	this.wintext = new PIXI.Text("", {font : '60px Arial', fill : 0xffffff, align : 'center'});
+	this.wintext.x = renderer.width/2;
+	this.wintext.y = renderer.height/2+50;
+	stage.addChild(this.wintext);	
+
+
+	this.restartbutton = new Button(renderer.width/2, renderer.height-20, 150, 30, "Restart Game", 
+		RestartGame);
+
+	this.decreasebutton = new Button(renderer.width/4, renderer.height-20, 150, 30, "Less Pieces", 
+		LessPieces);
+
+	this.increasebutton = new Button(renderer.width*3/4, renderer.height-20, 150, 30, "More Pieces", 
+		MorePieces);
+
+	stage.addChild(this.restartbutton.group);
+	
+};
+
+Game.prototype.ScorePiece = function (piece) {
+	var other = 3-this.player;
+
+	this.scores[this.player] += piece.value;
+	this.scores[0] -= piece.value;
+	
+	this.holder.MovePiece(this.player, piece);
+
+	if (this.scores[this.player] >= this.scores[other]) {
+		this.player = other;
+		this.holder.setPlayer(this.player);
+	}
+
+	this.scoretext.text = "Score: "+this.scores[1]+"-"+this.scores[2];
+
+	var text;
+	if (this.scores[0] == 0) {
+		if (this.scores[1] > this.scores[2]) {
+			text = "P1 Wins!";
+		} else if (this.scores[2] > this.scores[1]) {
+			text = "P2 Wins!";
+		} else {
+			text = "Tie Game!";
+		}
+		this.wintext.text = text;
+		this.wintext.x = renderer.width/2 - this.wintext.width/2;
+	}
+	
+
+}
+
+Game.prototype.ShowPreview = function (piece) {
+	var pp = null;
+	var needle;
+	var i;
+
+	// turn off all previews?
+	if (piece == null) {
+		for (i in this.preview_pieces) {	
+			needle = this.preview_pieces[i];
+			needle.setMode(MODE.HIDDEN);
+		}
+		return;
+	}
+
+	// find the preview piece
+	var needle;
+	for (i in this.preview_pieces) {
+		needle = this.preview_pieces[i];
+		if (needle.value == piece.value) {
+			pp = needle;
+		}
+	}
+
+	if (pp != null) {
+		pp.setMode(MODE.PREVIEW);
+		this.holder.PreviewPiece(this.player, pp);
+	}
+
+
+}
+
+Game.prototype.CreateBoard = function (n) {
+	var LEFT = 40;
+	var RIGHT = renderer.width-LEFT;
+	var TOP = 280;
+	var XGAP = 20;
+	var YGAP = 20;
+
+	var x = LEFT;
+	var y = TOP;
+
+	for (i=1; i<=this.n; i++) {
+		var p = new Piece(i,n);
+		p.addToStage(stage);
+
+		this.pieces.push(p);
+		this.scores[0] += i;
+
+		// place it
+		p.moveTo(x, y);
+
+		// advance cursor
+		width = p.graphics.width;
+		x += width + XGAP;
+		
+		// carriage return?
+		if (x+width > RIGHT) {
+			x = LEFT;
+			y += YGAP + p.graphics.height;
+		}
+
+		// create a preview piece
+		var pp = new Piece(i,n);
+		this.preview_pieces.push(pp);
+		pp.setMode(MODE.HIDDEN);
+		pp.addToStage(stage);
+	}
+}
+
+var Holder = function () {
+	this.graphics = new PIXI.Container();
+	this.player = 1;
+
+	var h = 150;
+	var w = 50;
+	var topgap = 10;
+	var top = -h/2;
+	var bot = h/2;
+	var left = -w/2;
+	var right = w/2;
+
+	this.notch = [new PIXI.Point(0,0), 
+				  new PIXI.Point(right+SEGMENTSIZE/2, top+topgap+SEGMENTSIZE),
+				  new PIXI.Point(right+SEGMENTSIZE/2, bot-topgap-SEGMENTSIZE)];
+
+	this.cursor = [new PIXI.Point(0,0), 
+				  new PIXI.Point(right+SEGMENTSIZE/2, top+topgap+SEGMENTSIZE),
+				  new PIXI.Point(right+SEGMENTSIZE/2, bot-topgap-SEGMENTSIZE)];
+
+	// draw the holder
+
+
+	var p = new PIXI.Graphics();
+
+	p.lineStyle(2, 0xFFFFFF, 1);
+	p.beginFill(0x333333);
+	p.drawPolygon([
+		left, top,   right, top,   // top
+		right, this.notch[1].y-SEGMENTSIZE,  this.notch[1].x, this.notch[1].y, right, this.notch[1].y+SEGMENTSIZE, // P1 notch2
+		right, this.notch[2].y-SEGMENTSIZE,  this.notch[2].x, this.notch[2].y, right, this.notch[2].y+SEGMENTSIZE, // P2 notch
+		
+		right, bot,  left, bot ]);
+	p.endFill();
+
+
+	this.graphics.addChild(p);
+	this.graphics.x = 50;
+	this.graphics.y = 120;
+
+	this.text = [{},{},{}];
+
+	this.textstyles = {
+		normal : {font : '22px Arial', fill : 0xAAAAAA, align : 'center'},
+		bold : {font : '22px Arial', fill : 0xffffff, align : 'center', stroke: 0xffffff, strokeThickness:2}
+	};
+
+
+	t = new PIXI.Text("P1", this.textstyles.normal);
+	t.x = -10;
+	t.y = this.notch[1].y-13;
+	this.graphics.addChild(t);
+	this.text[1] = t;
+
+	t = new PIXI.Text("P2", this.textstyles.normal);
+	t.x = -10;
+	t.y = this.notch[2].y-13;
+	this.graphics.addChild(t);
+	this.text[2] = t;
+
+
+	this.setPlayer(1);
+}
+
+Holder.prototype.setPlayer = function(player) {
+	this.player = player;
+	var other = 3-this.player;
+
+	this.text[this.player].style = this.textstyles.bold;
+	this.text[other].style = this.textstyles.normal;
+};
+
+Holder.prototype.PreviewPiece = function (player, piece) {
+	var pos = this.graphics.toGlobal(this.cursor[player]);
+	piece.moveTo(pos.x, pos.y);
+};
+
+Holder.prototype.MovePiece = function (player, piece) {
+	var pos = this.graphics.toGlobal(this.cursor[player]);
+	piece.moveTo(pos.x, pos.y);
+
+	this.cursor[player].x += piece.advance;
+};
+
+
+var Piece = function (value, n) {
+	this.assigned = 0;
+	this.graphics = new PIXI.Container();
+	this.value = value;
+	this.graphics_modes = {};
+	for (var key in MODE) {
+		this.graphics_modes[MODE[key]] = this.makeGraphics(MODE[key], value, n);
+	}
+	this.setMode(1);
+};
+
+Piece.prototype.setMode = function (mode) {
+	for (var key in this.graphics_modes) {
+		this.graphics_modes[key].visible = false;
+	}
+	
+	this.graphics_modes[mode].visible = true;
+	this.graphics_modes[MODE.HIDDEN].visible = false;
+}
+
+Piece.prototype.makeGraphics = function (mode, value, n) {
+	var self = this;
+	var p = new PIXI.Graphics();
+	var back = -SEGMENTSIZE/2;
+	var top = -SEGMENTSIZE;
+	var bot = SEGMENTSIZE;
+	var width = SEGMENTSIZE*this.value;
+
+	var basecolor = color('hsv('+360*(value-1)/n+',100,100)');
+	var outlinecolor = color('rgb(255,255,255)')
+	var inlinecolor = basecolor.tint(.3);
+
+	this.advance = SEGMENTSIZE*self.value;
+
+	switch (mode) {
+		case MODE.PREVIEW:
+			basecolor = basecolor.tone(1);
+			outlinecolor = basecolor.tint(.3);
+			p.lineStyle(2, outlinecolor.packed_argb(), 1);
+			p.beginFill(basecolor.packed_argb(), 0.25);
+			break;
+		case MODE.DISABLED:
+		case MODE.READY:
+			p.lineStyle(2, outlinecolor.packed_argb(), 1);
+			p.beginFill(basecolor.packed_argb(), 0.25);
+			break;
+		case MODE.HOVER:
+			p.lineStyle(3, outlinecolor.packed_argb(), 1);
+			p.beginFill(basecolor.packed_argb(), 0.5);
+			break;
+		case MODE.HIDDEN:
+			p.lineStyle(3, outlinecolor.packed_argb(), 1);
+			p.beginFill(basecolor.packed_argb(), 0.5);
+			break;
+	}
+	p.drawPolygon([0, 0, back, top, back+width, top, width, 0, back+width, bot, back, bot]);
+	p.endFill();
+
+	p.lineStyle(2, outlinecolor.packed_argb(), .75);	
+	for (i=1; i<this.value; i++) {
+		p.moveTo(back+SEGMENTSIZE*i, top);
+		p.lineTo(SEGMENTSIZE*i, 0);
+		p.lineTo(back+SEGMENTSIZE*i, bot);
+		p.currentPath.shape.closed = false;
+	}
+
+	var lowvalue = this.value % 10;
+	var hivalue = Math.floor(this.value/10);
+
+
+	var lowdigit = new PIXI.Text(lowvalue, {font : '22px Arial', fill : outlinecolor.hex6(), align : 'center'});
+	lowdigit.x = SEGMENTSIZE*(this.value-1)+2;
+	lowdigit.y = -SEGMENTSIZE*.65+1;
+	p.addChild(lowdigit);
+
+	if (hivalue > 0) {
+		var hidigit = new PIXI.Text(hivalue,{font : '22px Arial', fill : outlinecolor.hex6(), align : 'center'});
+		hidigit.x = SEGMENTSIZE*(this.value-2)+2;
+		hidigit.y = -SEGMENTSIZE*.65+1;
+		p.addChild(hidigit);
+	}
+
+	p.interactive = true;
+	p.mouseover = function (event) {
+		self.onMouseOver(event);
+	}
+	p.mouseout = function (event) {
+		self.onMouseOut(event);
+	}
+	p.mousedown = function (event) {
+		self.onMouseDown(event);
+	}
+
+
+	self.graphics.addChild(p);
+
+	return p;
+}
+
+Piece.prototype.onMouseOver = function (event) {
+	if (this.assigned == 0) {
+		this.setMode(MODE.HOVER);
+
+		game.ShowPreview(this);
+	}
+}
+
+Piece.prototype.onMouseOut = function (event) {
+	if (this.assigned == 0) {
+		this.setMode(MODE.READY);
+
+		game.ShowPreview(null);
+	}
+}
+
+Piece.prototype.onMouseDown = function (event) {
+	if (this.assigned == 0) {
+		game.ShowPreview(null);
+
+		this.assigned = game.player;
+		game.ScorePiece(this);
+		this.setMode(MODE.DISABLED);
+	}
+
+}
+
+Piece.prototype.moveTo = function (x, y) {
+	this.graphics.x = x;
+	this.graphics.y = y;
+};
+
+Piece.prototype.addToStage = function (stage) {
+	stage.addChild(this.graphics);
+};
+
+
+
+
+
+
+function RestartGame() {
+	stage.removeChildren();
+	game = new Game(npieces);
+} 
+
+function LessPieces() {
+	npieces -= 1;
+	if (npieces < 2) {
+		npieces = 2;
+	}
+	RestartGame();
+} 
+
+function MorePieces() {
+	npieces += 1;
+	if (npieces >= 12) {
+		npieces = 12;
+	}
+	RestartGame();
+} 
+
+
+stage.mousemove = function (event) {
+	//pos = event.data.getLocalPosition(this);
+	//p.moveTo(pos.x, pos.y);
+}
+
+
+//var polygon = new PIXI.Polygon([10,10, 40,40, 10,40]);
+//stage.addChild(polygon);
+
+//var  circle = new PIXI.Circle(10,10,10);
+//stage.addChild(circle);
+
+//var thing = new PIXI.Graphics();
+//stage.addChild(thing);
+
+//Tell the `renderer` to `render` the `stage`
+renderer.render(stage);
+
+RestartGame();
+
+// run the render loop
+animate();
+
+function animate() {
+    renderer.render(stage);
+    requestAnimationFrame( animate );
+}
+
+
+	</script>
+
+	</body>
+</html>
+
